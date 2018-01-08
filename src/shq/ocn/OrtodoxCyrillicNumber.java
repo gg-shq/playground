@@ -1,30 +1,26 @@
 package shq.ocn;
 
-import com.google.common.collect.Iterators;
-import com.google.common.collect.Lists;
-
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.ListIterator;
+import java.util.Arrays;
 
-public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> {
+public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxCyrillicNumber>,
+        RadixForestNumber<OrtodoxCyrillicNumber> {
 
-    public static final long BASE = 43;
+    public static final int BASE = 43;
     public static final BigInteger BIGINT_BASE = BigInteger.valueOf(BASE);
 
     public static final char DIGITS[] = {
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И',
-        'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т',
-        'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь',
-        'Э', 'Ю', 'Я',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', // 0x
+        'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', // 1x
+        'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', // 2x
+        'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', // 3x
+        'Э', 'Ю', 'Я',                                    // 4x
     };
-    private final List<Integer> digits;
+    private int[] digits;
 
     public OrtodoxCyrillicNumber() {
-        this(0);
+        digits = new int[1];
+        digits[0] = 0;
     }
 
     public OrtodoxCyrillicNumber(long value) {
@@ -33,10 +29,11 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
 
     public OrtodoxCyrillicNumber(BigInteger value) {
         if (value.compareTo(BigInteger.ZERO) < 0)
-            throw new IllegalArgumentException("Православное число не может нести негатив!");
+            throw newNegativeException();
 
         if (value.equals(BigInteger.ZERO)) {
-            digits = new ArrayList<>(0);
+            digits = new int[1];
+            digits[0] = 0;
             return;
         }
 
@@ -45,40 +42,53 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
         if (magnitude > Integer.MAX_VALUE - 8)
             throw new IllegalArgumentException("Россия не сможет вместить число порядка " + magnitude);
 
-        digits = new ArrayList<>((int) magnitude);
+        digits = new int[(int) magnitude];
 
-        while (!value.equals(BigInteger.ZERO)) {
+        for (int i = 0; !value.equals(BigInteger.ZERO); ++i) {
             BigInteger[] modRem = value.divideAndRemainder(BIGINT_BASE);
 
             int digit = modRem[1].byteValueExact();
             assert digit >= 0 && digit < BASE;
 
-            digits.add(digit);
+            digits[i] = digit;
 
             value = modRem[0];
         }
     }
 
+    private static IllegalArgumentException newNegativeException() {
+        return new IllegalArgumentException("Православное число не может нести негатив!");
+    }
+
     private OrtodoxCyrillicNumber(int[] digits) {
-        this.digits = new ArrayList<>(digits.length);
-        for (int digit : digits) {
-            assert digit >= 0 && digit < BASE;
-            this.digits.add(digit);
+        if (digits[digits.length - 1] != 0)
+            this.digits = digits;
+        else {
+            int msd = digits.length - 1;
+            while (msd > 0 && digits[msd] == 0)
+                --msd;
+
+            this.digits = Arrays.copyOf(digits, msd + 1);
         }
     }
 
     public OrtodoxCyrillicNumber(String strVal) {
-        this.digits = new ArrayList<>(strVal.length());
-        for (char c : strVal.toCharArray()) {
-            this.digits.add(0, ord(c));
+        char[] chars = strVal.toCharArray();
+
+        int msd = chars.length - 1;
+        while (msd > 0 && chars[msd] == DIGITS[0])
+            --msd;
+
+        digits = new int[strVal.length()];
+        for (int i = 0; i <= msd; ++i) {
+            digits[msd - i] = ord(chars[i]);
         }
     }
 
-    private OrtodoxCyrillicNumber(ArrayList<Integer> digits) {
-        this.digits = digits;
-    }
-
     public static int ord(char orthodoxCyrillicDigit) {
+
+        // Match larger ranges first
+
         if (orthodoxCyrillicDigit >= 'Ж' && orthodoxCyrillicDigit <= 'Я')
             return orthodoxCyrillicDigit - 'Ж' + 17;
 
@@ -95,8 +105,28 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
             + "Примение неправославной цифры '" + orthodoxCyrillicDigit + "'. Штраф направлен почтой.");
     }
 
+    public boolean isZero() {
+        return digits.length == 1 && digits[0] == DIGITS[0];
+    }
+
+    public boolean isOne() {
+        return digits.length == 1 && digits[0] == DIGITS[1];
+    }
+
+    @Override public int digitBase() {
+        return BASE;
+    }
+
+    @Override public int digitCount() {
+        return digits.length;
+    }
+
+    @Override public int digit(int n) {
+        return digits[n];
+    }
+
     @Override public String toString() {
-        StringBuilder sb = new StringBuilder(digits.size());
+        StringBuilder sb = new StringBuilder(digits.length);
         for (int digit : digits) {
             sb.insert(0, DIGITS[digit]);
         }
@@ -105,30 +135,58 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
 
     public BigInteger toBigInteger() {
         BigInteger result = BigInteger.ZERO;
-        for (ListIterator<Integer> iter = digits.listIterator(digits.size()); iter.hasPrevious(); ) {
-            int digit = iter.previous();
-            result = result.multiply(BIGINT_BASE).add(BigInteger.valueOf(digit));
-        }
+        for (int i = digits.length - 1; i >= 0; --i)
+            result = result.multiply(BIGINT_BASE).add(BigInteger.valueOf(digits[i]));
         return result;
     }
 
+    private static BigInteger toBigInteger(int[] digits) {
+        BigInteger result = BigInteger.ZERO;
+        for (int i = digits.length - 1; i >= 0; --i)
+            result = result.multiply(BIGINT_BASE).add(BigInteger.valueOf(digits[i]));
+        return result;
+    }
+
+    @Override public int intValue() {
+        return toBigInteger().intValue();
+    }
+
+    @Override public long longValue() {
+        return toBigInteger().longValue();
+    }
+
+    @Override public float floatValue() {
+        return toBigInteger().floatValue();
+    }
+
+    @Override public double doubleValue() {
+        return toBigInteger().doubleValue();
+    }
+
     @Override public int hashCode() {
-        return digits.hashCode();
+        return Arrays.hashCode(digits);
     }
 
     @Override public boolean equals(Object obj) {
         return obj != null
             && obj.getClass() == OrtodoxCyrillicNumber.class
-            && digits.equals(((OrtodoxCyrillicNumber) obj).digits);
+            && Arrays.equals(digits, ((OrtodoxCyrillicNumber) obj).digits);
     }
 
     @Override public int compareTo(OrtodoxCyrillicNumber o) {
-        int s = digits.size() - o.digits.size();
+        return truncateCompareTo(o, 0);
+    }
+
+    @Override public int truncateCompareTo(OrtodoxCyrillicNumber o, final int lowerDigitsToSkip) {
+        if (o == null)
+            return -1;
+
+        int s = digits.length - o.digits.length;
         if (s != 0)
             return s;
 
-        for (int i = digits.size() - 1; i >= 0; --i) {
-            s = digits.get(i) - o.digits.get(i);
+        for (int i = digits.length - 1; i >= lowerDigitsToSkip; --i) {
+            s = digits[i] - o.digits[i];
             if (s != 0)
                 return s;
         }
@@ -137,10 +195,10 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
     }
 
     public OrtodoxCyrillicNumber add(OrtodoxCyrillicNumber o) {
+        int[] a1;
+        int[] a2;
 
-        List<Integer> a1, a2;
-
-        if (o.digits.size() > digits.size()) {
+        if (o.digits.length > digits.length) {
             a1 = o.digits;
             a2 = digits;
         } else {
@@ -148,8 +206,8 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
             a1 = o.digits;
         }
 
-        int a1sz = a1.size();
-        int a2sz = a2.size();
+        int a1sz = a1.length;
+        int a2sz = a2.length;
 
         int carry = 0;
 
@@ -157,30 +215,149 @@ public class OrtodoxCyrillicNumber implements Comparable<OrtodoxCyrillicNumber> 
 
         int i = 0;
         for (; i < a2sz; i++) {
-            int s = carry + a1.get(i) + a2.get(i);
-            carry = 0;
-            while (s >= BASE) {
+            int s = carry + a1[i] + a2[i];
+
+            if (s >= BASE) {
                 s -= BASE;
-                ++carry;
+                carry = 1;
             }
+            else
+                carry = 0;
+
             sum[i] = s;
         }
 
-        for (; i < a1sz; i++) {
-            int s = carry + a1.get(i);
-            carry = 0;
-            while (s >= BASE) {
+        for (; i < a1sz && carry != 0; i++) {
+            int s = carry + a1[i];
+
+            if (s >= BASE) {
                 s -= BASE;
-                ++carry;
+                carry = 1;
             }
+            else
+                carry = 0;
+
             sum[i] = s;
         }
 
-        if (carry != 0)
+        if (carry != 0) {
+            assert i == a1sz;
             sum[i] = carry;
+        } else {
+            if (i < a1sz)
+                System.arraycopy(a1, i, sum, i, a1sz - i);
+
+            sum = Arrays.copyOf(sum, a1sz);
+        }
 
         OrtodoxCyrillicNumber sumOcn = new OrtodoxCyrillicNumber(sum);
-        assert sumOcn.toBigInteger().equals(this.toBigInteger().add(o.toBigInteger()));
+
+        assert sumOcn.toBigInteger().equals(this.toBigInteger().add(o.toBigInteger()))
+                : "Addition error: " + this + " + " + o + ": actual=" + sumOcn
+                + "; required=" + new OrtodoxCyrillicNumber(this.toBigInteger().add(o.toBigInteger()));
+
+        return sumOcn;
+    }
+
+    public void addInplace(OrtodoxCyrillicNumber o) {
+        int[] a1;
+        int[] a2;
+
+        if (o.digits.length > digits.length) {
+            a1 = new int[o.digits.length];
+            System.arraycopy(o.digits, 0, a1, 0, a1.length);
+            a2 = digits;
+        } else {
+            a2 = digits;
+            a1 = o.digits;
+        }
+
+        int a1sz = a1.length;
+        int a2sz = a2.length;
+
+        int carry = 0;
+
+        int i = 0;
+        for (; i < a2sz; i++) {
+            a1[i] += carry + a2[i];
+            if (a1[i] >= BASE) {
+                a1[i] -= BASE;
+                carry = 1;
+            }
+            else
+                carry = 0;
+        }
+
+        for (; i < a1sz && carry != 0; i++) {
+            a1[i] += carry;
+            if (a1[i] >= BASE) {
+                a1[1] -= BASE;
+                carry = 1;
+            }
+            else
+                carry = 0;
+        }
+
+        if (carry != 0) {
+            assert i == a1sz;
+            int[] newa1 = new int[a1.length + 1];
+            System.arraycopy(a1, 0, newa1, 0, a1.length);
+            a1 = newa1;
+            a1[i] = carry;
+        }
+
+        digits = a1;
+    }
+
+    public OrtodoxCyrillicNumber subtract(OrtodoxCyrillicNumber o) {
+        if (this == o)
+            return new OrtodoxCyrillicNumber();
+
+        int[] othDigits = o.digits;
+        int[] thisDigits = this.digits;
+
+        int osize = othDigits.length;
+        int thisSize = thisDigits.length;
+
+        if (osize > thisSize)
+            throw newNegativeException();
+
+        if (osize == thisSize && thisDigits[osize - 1] < othDigits[osize - 1])
+            throw newNegativeException();
+
+        int borrow = 0;
+
+        int[] sum = new int[thisSize];
+
+        int i = 0;
+        for (; i < osize; i++) {
+            int s = thisDigits[i] - othDigits[i] - borrow;
+            borrow = 0;
+            while (s < 0) {
+                s += BASE;
+                ++borrow;
+            }
+            sum[i] = s;
+        }
+
+        for (; i < thisSize; i++) {
+            int s = thisDigits[i] - borrow;
+            borrow = 0;
+            while (s < 0) {
+                s += BASE;
+                ++borrow;
+            }
+            sum[i] = s;
+        }
+
+        assert borrow == 0;
+
+        OrtodoxCyrillicNumber sumOcn = new OrtodoxCyrillicNumber(sum);
+
+        assert sumOcn.toBigInteger().equals(this.toBigInteger().subtract(o.toBigInteger()))
+                : "Subtraction error: actual=" + sumOcn
+                + "; required=" + new OrtodoxCyrillicNumber(this.toBigInteger().subtract(o.toBigInteger()));
+
         return sumOcn;
     }
 }

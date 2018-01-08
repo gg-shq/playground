@@ -1,25 +1,23 @@
 package shq.ocn;
 
-import shq.parsers.Util;
+import javafx.util.Pair;
+import shq.etc.Util;
 
-import java.io.BufferedReader;
 import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.IOException;
-import java.math.BigInteger;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.NavigableMap;
-import java.util.Set;
-import java.util.Spliterator;
-import java.util.TreeMap;
-import java.util.function.Consumer;
+import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 public class FindOcnWordOps {
+
+    private static final OrtodoxCyrillicNumber SENTINEL_OCN = new OrtodoxCyrillicNumber("ПРОГРАММИСТ");
+
+    public static final String DICT_FILE = "src/shq/ocn/lop1v2.txt";
+    private static final int WORD_COUNT_ESTIMATION = 170_000;
+    private static final long REPORT_TIME_MS = 10_000;
+    public static final int REPORT_ITER_MASK = 0xfff;
+
+    private OrtodoxCyrillicNumber[] ocns;
 
     public static void main(String[] args) {
         try {
@@ -30,147 +28,242 @@ public class FindOcnWordOps {
         }
     }
 
-    NavigableMap<OrtodoxCyrillicNumber, Set<String>> wordOcns = new TreeMap<>();
-
-    private static class LineReaderSpliterator implements Spliterator<String> {
-
-        private final BufferedReader reader;
-        private boolean eof = false;
-        private IOException exception = null;
-
-        public LineReaderSpliterator(BufferedReader reader) {
-            this.reader = reader;
-        }
-
-        public IOException exception() {
-            return exception;
-        }
-
-        @Override public boolean tryAdvance(Consumer<? super String> action) {
-            try {
-                if (eof)
-                    return false;
-
-                String line = reader.readLine();
-                if (line != null) {
-                    action.accept(line);
-                    return true;
-                }
-                else {
-                    eof = true;
-                    return false;
-                }
-            }
-            catch (IOException e) {
-                exception = e;
-                return false;
-            }
-        }
-
-        @Override public Spliterator<String> trySplit() {
-            return null;
-        }
-
-        @Override public long estimateSize() {
-            return Long.MAX_VALUE;
-        }
-
-        @Override public int characteristics() {
-            return DISTINCT | NONNULL | IMMUTABLE;
-        }
+    public FindOcnWordOps() throws FileNotFoundException {
+        ocns = loadDict();
     }
 
-    private static Stream<String> createFileLineStream(String fileName) throws FileNotFoundException {
-        BufferedReader reader = new BufferedReader(new FileReader(fileName));
-        return StreamSupport.stream(new LineReaderSpliterator(reader), false);
+    private void run() {
+        //searchForSums2();
+        searchForSums();
     }
 
-    private void run() throws FileNotFoundException {
+    private OrtodoxCyrillicNumber[] loadDict() throws FileNotFoundException {
         System.out.println("Reading dictionary...");
 
-        createFileLineStream("src/shq/ocn/lop1v2.txt")
-            .flatMap(line -> Stream.of(line.trim().toUpperCase().split("[-. :(),!\\?\"'`]")))
-            .forEach(line -> {
-                line = line.trim();
+        // Read into hash dictionary to eliminate duplicates
+        // If our dictionary is sorted, we gain additional speedup on sorting it later
+        // if we use LinkedHasSet here.
+        Set<OrtodoxCyrillicNumber> ocnSet = LineReaderSpliterator.streamOfFileLines(DICT_FILE)
+                .flatMap(line -> Stream.of(line.trim().toUpperCase().split("[-. :(),!\\?\"'`]")))
+                .map(word -> word.trim())
+                .filter(word -> word.length() >= 3)
+                .map(word -> {
+                    try {
+                        return new OrtodoxCyrillicNumber(word);
+                    } catch (Exception e) {
+                        System.out.println("Can't parse OCN " + word + ": " + e.getMessage());
+                        return SENTINEL_OCN;
+                    }
+                })
+                .collect(Collectors.toCollection(() -> new LinkedHashSet<>(WORD_COUNT_ESTIMATION)));
 
-                if (line.length() < 3)
-                    return;
+        OrtodoxCyrillicNumber[] ocns = ocnSet.toArray(new OrtodoxCyrillicNumber[ocnSet.size()]);
 
-                try {
-                    OrtodoxCyrillicNumber ocn = new OrtodoxCyrillicNumber(line);
+        System.out.println("Sorting dictionary...");
 
-                    wordOcns.merge(ocn, Util.modifiableSingletonSet(line, HashSet::new), (o, n) -> {
-                        o.addAll(n);
-                        return o;
-                    });
-                }
-                catch (Exception e) {
-                    System.out.println("Can't parse OCN " + line + ": " + e.getMessage());
-                }
-            });
+        // Sort using TimSort, which has a great chance to be faster here
+        Arrays.sort(ocns, (o1, o2) -> {
+            if (o1 == o2)
+                return 0;
+            if (o1 == null)
+                return -1;
+            return o1.compareTo(o2);
+        });
 
-        System.out.println("Read words: " + wordOcns.size());
+        return ocns;
+    }
 
-        for (Map.Entry<OrtodoxCyrillicNumber, Set<String>> e : wordOcns.entrySet()) {
-            if (e.getValue().size() > 1)
-                System.out.println("Same OCN: " + e.getValue());
-        }
+    private void searchForSums() {
+        System.out.println("Building OCN tree...");
+
+        RadixForestIndex<OrtodoxCyrillicNumber> radixForestIndex = new RadixForestIndex<>(OrtodoxCyrillicNumber.BASE,
+                ocns[ocns.length - 1].digitCount());
+
+        radixForestIndex.build(ocns);
 
         System.out.println("Looking for sums...");
 
-        int n = 0;
+        long nextReportTime = System.currentTimeMillis() + REPORT_TIME_MS;
 
-        Iterator<Map.Entry<OrtodoxCyrillicNumber, Set<String>>> i1 = wordOcns.entrySet().iterator();
-        while (i1.hasNext()) {
-            Map.Entry<OrtodoxCyrillicNumber, Set<String>> e1 = i1.next();
+        long pairsAnalysed = 0;
 
-            System.out.println(e1.getValue());
+        long treeUses = 0;
+        long treeSavings = 0;
 
-            Iterator<Map.Entry<OrtodoxCyrillicNumber, Set<String>>> i2 = wordOcns.tailMap(e1.getKey(), true).entrySet().iterator();
-
-            if (!i2.hasNext())
+        for (int i1 = 0; i1 < ocns.length; ++i1) {
+            OrtodoxCyrillicNumber e1 = ocns[i1];
+            if (e1.isZero())
                 continue;
 
-            Map.Entry<OrtodoxCyrillicNumber, Set<String>> e2 = i2.next();
+            int i2 = i1;
+            OrtodoxCyrillicNumber e2 = ocns[i2];
 
-            OrtodoxCyrillicNumber sum = e1.getKey().add(e2.getKey());
+            assert ! e2.isZero();
 
-            Iterator<Map.Entry<OrtodoxCyrillicNumber, Set<String>>> iSum = wordOcns.tailMap(sum, true).entrySet().iterator();
-
-            if (!iSum.hasNext())
+            if (i2 >= ocns.length)
                 continue;
 
-            Map.Entry<OrtodoxCyrillicNumber, Set<String>> eSum = iSum.next();
+            OrtodoxCyrillicNumber e1e2sum = e1.add(e2);
+
+            //int i3 = i2 + 1;
+
+            Pair<Boolean, Integer> index = radixForestIndex.find(e1e2sum);
+
+            if (index.getValue() >= ocns.length) // finished
+                break;
+
+            if (index.getKey()) {
+                if (ocns[index.getValue()].compareTo(e1e2sum) != 0) {
+                    radixForestIndex.find(e1e2sum);
+                }
+                assert ocns[index.getValue()].compareTo(e1e2sum) == 0;
+            }
+            else
+                assert ocns[index.getValue()].compareTo(e1e2sum) > 0;
+
+            if (index.getValue() < 0 || ocns[index.getValue() - 1].compareTo(e1e2sum) >= 0) {
+                radixForestIndex.find(e1e2sum);
+            }
+
+            assert ocns[index.getValue() - 1].compareTo(e1e2sum) < 0
+                : "should be: " + ocns[index.getValue() - 1] + " < " + e1e2sum
+                    + " < " + ocns[index.getValue()];
+
+            int i3 = index.getValue();
+
+            assert i2 <= i3 : "" + i1 + " + " + i2 + " >= " + i3;
+
+            ++treeUses;
+            // last term is penalty for tree scan compared to simple forward array scan
+            treeSavings += (i3 - (i2 + 1) - e1e2sum.digitCount());
+
+            if (i3 >= ocns.length)
+                continue;
+
+            OrtodoxCyrillicNumber e3 = ocns[i3];
 
             for (;;) {
-//                if ((n & 0xffff) == 0)
-//                    System.out.println("? " + e1.getValue() + " + " + e2.getValue() + " = " + sum);
-//                n++;
+                ++pairsAnalysed;
 
-                int diff = sum.compareTo(eSum.getKey());
+                long currentTimeMillis = System.currentTimeMillis();
+
+                if ((pairsAnalysed & REPORT_ITER_MASK) == 0 && currentTimeMillis > nextReportTime) {
+
+                    System.out.println("@ " + e1 + " + " + e2 + " = " + e1e2sum + " ~> " + e3
+                        + "; " + i1 + " + " + i2 + " ~ " + i3 + " < " + ocns.length
+                        + "; tree savings=" + (float) treeSavings / treeUses
+                        + "; pairs=" + treeUses + " triples=" + pairsAnalysed);
+
+                    nextReportTime = currentTimeMillis + REPORT_TIME_MS;
+                }
+
+                int diff = e1e2sum.compareTo(e3);
 
                 if (diff == 0) {
-                    System.out.println("==== Found sum: " + e1.getValue() + " + " + e2.getValue() + " = " + eSum.getValue());
+                    assert e1.toBigInteger().add(e2.toBigInteger()).equals(e3.toBigInteger());
 
-                    e2 = i2.next();
-                    eSum = iSum.next();
+                    System.out.println("==== Found: " + e1 + " + " + e2 + " = " + e3);
+
+                    ++i2;
+                    ++i3;
+
+                    if (i3 >= ocns.length)
+                        break;
+
+                    e2 = ocns[i2];
+                    e3 = ocns[i3];
+                    e1e2sum = e1.add(e2);
                     continue;
                 }
 
                 if (diff < 0) {
-                    if (!i2.hasNext())
+                    ++i2;
+
+                    if (i2 >= ocns.length)
                         break;
 
-                    e2 = i2.next();
-                } else {
-                    if (!iSum.hasNext())
-                        break;
+                    e2 = ocns[i2];
+                    e1e2sum = e1.add(e2);
 
-                    eSum = iSum.next();
+                    if (i2 < i3)
+                        continue;
                 }
 
-                sum = e1.getKey().add(e2.getKey());
+                ++i3;
+
+                if (i3 >= ocns.length)
+                    break;
+
+                e3 = ocns[i3];
+
+                assert i2 < i3;
             }
+        }
+
+        System.out.println("Done");
+    }
+
+    private void searchForSums2() {
+        System.out.println("Building OCN tree...");
+
+        RadixForestIndex<OrtodoxCyrillicNumber> radixForestIndex = new RadixForestIndex<>(
+                OrtodoxCyrillicNumber.BASE, ocns[ocns.length - 1].digitCount());
+
+        radixForestIndex.build(ocns);
+
+        System.out.println("Looking for sums...");
+
+        int span = 1;
+        while (span < ocns.length) {
+            TreeMap<OrtodoxCyrillicNumber, Set<Integer>> distances = new TreeMap<>();
+
+            System.out.println("Span " + span + ": Building distances...");
+
+            for (int i = 0; i < ocns.length - span; ++i) {
+                OrtodoxCyrillicNumber e1 = ocns[i];
+                OrtodoxCyrillicNumber e2 = ocns[i + span];
+                OrtodoxCyrillicNumber diff = e2.subtract(e1);
+
+                distances.merge(diff, Util.modifiableSingletonSet(i, HashSet::new), (o, n) -> {
+                    o.addAll(n);
+                    return o;
+                });
+            }
+
+            System.out.println("Entries: " + distances.size());
+
+            if (distances.size() == 0)
+                continue;
+
+            OrtodoxCyrillicNumber firstDiff = distances.keySet().iterator().next();
+
+            Pair<Boolean, Integer> index = radixForestIndex.find(firstDiff);
+            int ocnIdx = index.getValue();
+
+            for (Map.Entry<OrtodoxCyrillicNumber, Set<Integer>> distance : distances.entrySet()) {
+                OrtodoxCyrillicNumber e1;
+                int cmp;
+                while ((cmp = (e1 = ocns[ocnIdx]).compareTo(distance.getKey())) < 0 && ocnIdx < ocns.length)
+                    ++ocnIdx;
+
+                if (cmp == 0) {
+                    for (int idx : distance.getValue()) {
+                        OrtodoxCyrillicNumber e2 = ocns[idx];
+                        OrtodoxCyrillicNumber eSum = ocns[idx + span];
+
+                        assert e1.toBigInteger().add(e2.toBigInteger()).equals(eSum.toBigInteger());
+
+                        System.out.println("==== Found: " + e1 + " + " + e2 + " = " + eSum);
+                    }
+                }
+
+                if (ocnIdx >= ocns.length)
+                    break;
+            }
+
+            System.out.println("Done");
+
+            ++span;
         }
     }
 }

@@ -1,6 +1,6 @@
 package shq.parsers.lr.builders.lalr;
 
-import shq.parsers.Util;
+import shq.etc.Util;
 import shq.parsers.grammar.Grammar;
 import shq.parsers.grammar.GrammarNotSupportedException;
 import shq.parsers.grammar.Grammars;
@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static shq.parsers.Util.putToMapAndThrowIfNotSame;
+import static shq.etc.Util.putToMapAndThrowIfNotSame;
 import static shq.parsers.grammar.Grammars.END_MARK;
 
 public class LALR {

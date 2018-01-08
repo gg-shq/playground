@@ -1,4 +1,4 @@
-package shq.parsers;
+package shq.etc;
 
 import shq.parsers.grammar.GrammarNotSupportedException;
 import shq.parsers.lr.builders.GotoSet;

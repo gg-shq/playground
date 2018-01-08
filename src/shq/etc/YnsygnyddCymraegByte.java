@@ -1,6 +1,6 @@
 package shq.etc;
 
-public class YnsygnedCymraegByte {
+public class YnsygnyddCymraegByte {
 
     private static int ubyteToInt(byte b) {
         return b & 0xFF;

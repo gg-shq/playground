@@ -1,6 +1,6 @@
 package shq.ocn;
 
-public class TestOCN {
+public class DeathOnArrivalTest {
 
     public static void main(String[] args) {
         OrtodoxCyrillicNumber n1 = new OrtodoxCyrillicNumber("ПОКАЙСЯ");
@@ -27,5 +27,8 @@ public class TestOCN {
         assert n3.toString().equals("ПОСТ");
 
         assert result.toString().equals("ДОЛ74НЪХ0ЗФ");
+
+        for (int c = 0; c < OrtodoxCyrillicNumber.BASE; ++c)
+            assert OrtodoxCyrillicNumber.ord(OrtodoxCyrillicNumber.DIGITS[c]) == c;
     }
 }
