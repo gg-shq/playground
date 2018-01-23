@@ -16,8 +16,11 @@ public class FindOcnWordOps {
     private static final int WORD_COUNT_ESTIMATION = 170_000;
     private static final long REPORT_TIME_MS = 10_000;
     public static final int REPORT_ITER_MASK = 0xfff;
+    private static final int MAX_SPAN = 8;
+    private static final int MAX_SPAN_P = 1 << MAX_SPAN;
 
     private OrtodoxCyrillicNumber[] ocns;
+    private Set<OrtodoxCyrillicNumber> ocnSet;
 
     public static void main(String[] args) {
         try {
@@ -29,21 +32,23 @@ public class FindOcnWordOps {
     }
 
     public FindOcnWordOps() throws FileNotFoundException {
-        ocns = loadDict();
+        loadDict();
     }
 
     private void run() {
-        //searchForSums2();
-        searchForSums();
+        sortDict();
+        searchForSums_straightfwd_hashmap();
+//        searchForSums_3idx();
+//        searchForSums_span();
     }
 
-    private OrtodoxCyrillicNumber[] loadDict() throws FileNotFoundException {
+    private void loadDict() throws FileNotFoundException {
         System.out.println("Reading dictionary...");
 
         // Read into hash dictionary to eliminate duplicates
         // If our dictionary is sorted, we gain additional speedup on sorting it later
         // if we use LinkedHasSet here.
-        Set<OrtodoxCyrillicNumber> ocnSet = LineReaderSpliterator.streamOfFileLines(DICT_FILE)
+        ocnSet = LineReaderSpliterator.streamOfFileLines(DICT_FILE)
                 .flatMap(line -> Stream.of(line.trim().toUpperCase().split("[-. :(),!\\?\"'`]")))
                 .map(word -> word.trim())
                 .filter(word -> word.length() >= 3)
@@ -56,8 +61,10 @@ public class FindOcnWordOps {
                     }
                 })
                 .collect(Collectors.toCollection(() -> new LinkedHashSet<>(WORD_COUNT_ESTIMATION)));
+    }
 
-        OrtodoxCyrillicNumber[] ocns = ocnSet.toArray(new OrtodoxCyrillicNumber[ocnSet.size()]);
+    private void sortDict() {
+        ocns = ocnSet.toArray(new OrtodoxCyrillicNumber[ocnSet.size()]);
 
         System.out.println("Sorting dictionary...");
 
@@ -69,11 +76,28 @@ public class FindOcnWordOps {
                 return -1;
             return o1.compareTo(o2);
         });
-
-        return ocns;
     }
 
-    private void searchForSums() {
+    private void searchForSums_straightfwd_hashmap() {
+        System.out.println("Looking for sums...");
+
+        long startTimeNs = System.nanoTime();
+
+        for (OrtodoxCyrillicNumber e1 : ocnSet) {
+            for (OrtodoxCyrillicNumber e2 : ocnSet) {
+                if (e1.compareTo(e2) < 0) {
+                    OrtodoxCyrillicNumber sum = e1.add(e2);
+                    if (ocnSet.contains(sum))
+                        System.out.println("==== Found: " + e1 + " + " + e2 + " = " + sum);
+                }
+            }
+        }
+
+        long stopTimeNs = System.nanoTime();
+        System.out.printf("Elapsed: %6.2s" + (stopTimeNs - startTimeNs) / 10e-6);
+    }
+
+    private void searchForSums_3idx() {
         System.out.println("Building OCN tree...");
 
         RadixForestIndex<OrtodoxCyrillicNumber> radixForestIndex = new RadixForestIndex<>(OrtodoxCyrillicNumber.BASE,
@@ -81,7 +105,24 @@ public class FindOcnWordOps {
 
         radixForestIndex.build(ocns);
 
+        System.out.println("Building differences...");
+
+        long[][] ocnDiffs = new long[ocns.length][MAX_SPAN];
+
+        for (int span = 0; span < MAX_SPAN; span++) {
+            int s = 1 << span;
+            int i = 1;
+            for (; i < ocns.length - s; ++i) {
+                ocnDiffs[i][span] = ocns[i + s].subtract(ocns[i]).longValue();
+            }
+            for (; i < ocns.length; ++i) {
+                ocnDiffs[i][span] = Long.MAX_VALUE;
+            }
+        }
+
         System.out.println("Looking for sums...");
+
+        long startTimeNs = System.nanoTime();
 
         long nextReportTime = System.currentTimeMillis() + REPORT_TIME_MS;
 
@@ -112,18 +153,10 @@ public class FindOcnWordOps {
             if (index.getValue() >= ocns.length) // finished
                 break;
 
-            if (index.getKey()) {
-                if (ocns[index.getValue()].compareTo(e1e2sum) != 0) {
-                    radixForestIndex.find(e1e2sum);
-                }
+            if (index.getKey())
                 assert ocns[index.getValue()].compareTo(e1e2sum) == 0;
-            }
             else
                 assert ocns[index.getValue()].compareTo(e1e2sum) > 0;
-
-            if (index.getValue() < 0 || ocns[index.getValue() - 1].compareTo(e1e2sum) >= 0) {
-                radixForestIndex.find(e1e2sum);
-            }
 
             assert ocns[index.getValue() - 1].compareTo(e1e2sum) < 0
                 : "should be: " + ocns[index.getValue() - 1] + " < " + e1e2sum
@@ -142,24 +175,29 @@ public class FindOcnWordOps {
 
             OrtodoxCyrillicNumber e3 = ocns[i3];
 
+            int e2warp = 0;
+            int e3warp = 0;
+
             for (;;) {
                 ++pairsAnalysed;
 
-                long currentTimeMillis = System.currentTimeMillis();
+                if ((pairsAnalysed & REPORT_ITER_MASK) == 0) {
+                    long currentTimeMillis = System.currentTimeMillis();
 
-                if ((pairsAnalysed & REPORT_ITER_MASK) == 0 && currentTimeMillis > nextReportTime) {
+                    if ( currentTimeMillis > nextReportTime) {
+                        System.out.println("@ " + e1 + " + " + e2 + " = " + e1e2sum + " ~> " + e3
+                                + "; " + i1 + " + " + i2 + " ~ " + i3 + " < " + ocns.length
+                                + "; tree savings=" + (float) treeSavings / treeUses
+                                + "; pairs=" + treeUses + " triples=" + pairsAnalysed);
 
-                    System.out.println("@ " + e1 + " + " + e2 + " = " + e1e2sum + " ~> " + e3
-                        + "; " + i1 + " + " + i2 + " ~ " + i3 + " < " + ocns.length
-                        + "; tree savings=" + (float) treeSavings / treeUses
-                        + "; pairs=" + treeUses + " triples=" + pairsAnalysed);
-
-                    nextReportTime = currentTimeMillis + REPORT_TIME_MS;
+                        nextReportTime = currentTimeMillis + REPORT_TIME_MS;
+                    }
                 }
 
-                int diff = e1e2sum.compareTo(e3);
+                long s = e1e2sum.compareTo(e3);
+                long diff = (s > 0) ? e1e2sum.subtract(e3).longValue() : (s < 0) ? e3.subtract(e1e2sum).longValue() : 0;
 
-                if (diff == 0) {
+                if (s == 0) {
                     assert e1.toBigInteger().add(e2.toBigInteger()).equals(e3.toBigInteger());
 
                     System.out.println("==== Found: " + e1 + " + " + e2 + " = " + e3);
@@ -173,37 +211,92 @@ public class FindOcnWordOps {
                     e2 = ocns[i2];
                     e3 = ocns[i3];
                     e1e2sum = e1.add(e2);
-                    continue;
-                }
 
-                if (diff < 0) {
-                    ++i2;
+//                    System.out.println("e2warp=" + e2warp + "; e3warp=" + e3warp);
+//                    e2warp = 1;
+//                    e3warp = 1;
+                }
+                else if (s < 0) {
+                    // TODO: check for MIN_VALUE
+
+                    diff = -diff;
+
+                    long[] diffs = ocnDiffs[i2];
+                    for (int span = 0; span <= MAX_SPAN; ++span) {
+                        if (span == MAX_SPAN || diffs[span] > diff) {
+                            if (span > 0) {
+                                i2 += 1 << (span - 1);
+                                treeSavings += (1 << span) - span;
+                            } else {
+                                ++i2;
+                                treeSavings -= span;
+                            }
+                            break;
+                        }
+                    }
 
                     if (i2 >= ocns.length)
                         break;
 
-                    e2 = ocns[i2];
-                    e1e2sum = e1.add(e2);
+                    if (i2 < i3) {
+                        e2 = ocns[i2];
+                        e1e2sum = e1.add(e2);
 
-                    if (i2 < i3)
-                        continue;
+//                        ++e2warp;
+//                        if (e3warp > 1)
+//                            System.out.println("           e3warp=" + e3warp);
+//                        e3warp = 1;
+                    }
+                    else {
+                        i3 = i2 + 1;
+
+                        if (i3 >= ocns.length)
+                            break;
+
+                        e2 = ocns[i2];
+                        e1e2sum = e1.add(e2);
+
+                        e3 = ocns[i3];
+
+//                        ++e3warp;
+                    }
+                } else {
+                    long[] diffs = ocnDiffs[i3];
+                    for (int span = 0; span <= MAX_SPAN; ++span) {
+                        if (span == MAX_SPAN || diffs[span] > diff) {
+                            if (span > 0) {
+                                i3 += 1 << (span - 1);
+                                treeSavings += (1 << span) - span;
+                            } else {
+                                ++i3;
+                                treeSavings -= span;
+                            }
+                            break;
+                        }
+                    }
+
+                    if (i3 >= ocns.length)
+                        break;
+
+                    e3 = ocns[i3];
+
+//                    ++e3warp;
+//                    if (e2warp > 1)
+//                        System.out.println("e2warp=" + e2warp);
+//                    e2warp = 1;
+
+                    assert i2 < i3;
                 }
-
-                ++i3;
-
-                if (i3 >= ocns.length)
-                    break;
-
-                e3 = ocns[i3];
-
-                assert i2 < i3;
             }
         }
 
+        long stopTimeNs = System.nanoTime();
+
         System.out.println("Done");
+        System.out.printf("Elapsed: %6.2s" + (stopTimeNs - startTimeNs) / 10e-6);
     }
 
-    private void searchForSums2() {
+    private void searchForSums_span() {
         System.out.println("Building OCN tree...");
 
         RadixForestIndex<OrtodoxCyrillicNumber> radixForestIndex = new RadixForestIndex<>(
@@ -212,6 +305,8 @@ public class FindOcnWordOps {
         radixForestIndex.build(ocns);
 
         System.out.println("Looking for sums...");
+
+        long startTimeNs = System.nanoTime();
 
         int span = 1;
         while (span < ocns.length) {
@@ -265,5 +360,8 @@ public class FindOcnWordOps {
 
             ++span;
         }
+
+        long stopTimeNs = System.nanoTime();
+        System.out.printf("Elapsed: %6.2s" + (stopTimeNs - startTimeNs) / 10e-6);
     }
 }

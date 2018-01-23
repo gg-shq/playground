@@ -1,9 +1,5 @@
 package shq.etc;
 
-import shq.parsers.grammar.GrammarNotSupportedException;
-import shq.parsers.lr.builders.GotoSet;
-import shq.parsers.lr.lrparser.LrParserTable;
-
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;

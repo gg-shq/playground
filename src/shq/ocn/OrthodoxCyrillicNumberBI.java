@@ -3,64 +3,24 @@ package shq.ocn;
 import java.math.BigInteger;
 import java.util.Arrays;
 
-public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxCyrillicNumber>,
-        RadixForestNumber<OrtodoxCyrillicNumber> {
+public class OrthodoxCyrillicNumberBI /* extends Number implements Comparable<OrthodoxCyrillicNumberBI> ,
+        RadixForestNumber<OrthodoxCyrillicNumberBI>*/ {
 
-    public static final int BASE = 43;
-    public static final BigInteger BIGINT_BASE = BigInteger.valueOf(BASE);
+    private BigInteger bi;
 
-    public static final char DIGITS[] = {
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', // 0x
-        'А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ё', 'Ж', 'З', 'И', // 1x
-        'Й', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', // 2x
-        'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Ъ', 'Ы', 'Ь', // 3x
-        'Э', 'Ю', 'Я',                                    // 4x
-    };
-    private int[] digits;
-
-    public OrtodoxCyrillicNumber() {
-        digits = new int[1];
-        digits[0] = 0;
+    public OrthodoxCyrillicNumberBI() {
+        bi = BigInteger.ZERO;
     }
 
-    public OrtodoxCyrillicNumber(long value) {
+    public OrthodoxCyrillicNumberBI(long value) {
         this(BigInteger.valueOf(value));
     }
-
-    public OrtodoxCyrillicNumber(BigInteger value) {
-        if (value.compareTo(BigInteger.ZERO) < 0)
-            throw newNegativeException();
-
-        if (value.equals(BigInteger.ZERO)) {
-            digits = new int[1];
-            digits[0] = 0;
-            return;
-        }
-
-        double magnitude = Math.ceil(Math.log(value.doubleValue()) / Math.log(BASE));
-
-        if (magnitude > Integer.MAX_VALUE - 8)
-            throw new IllegalArgumentException("Россия не сможет вместить число порядка " + magnitude);
-
-        digits = new int[(int) magnitude];
-
-        for (int i = 0; !value.equals(BigInteger.ZERO); ++i) {
-            BigInteger[] modRem = value.divideAndRemainder(BIGINT_BASE);
-
-            int digit = modRem[1].byteValueExact();
-            assert digit >= 0 && digit < BASE;
-
-            digits[i] = digit;
-
-            value = modRem[0];
-        }
+    public OrthodoxCyrillicNumberBI(BigInteger value) {
+        bi = value;
     }
 
-    private static IllegalArgumentException newNegativeException() {
-        return new IllegalArgumentException("Православное число не может нести негатив!");
-    }
-
-    private OrtodoxCyrillicNumber(int[] digits) {
+/*
+    private OrthodoxCyrillicNumberBI(int[] digits) {
         if (digits[digits.length - 1] != 0)
             this.digits = digits;
         else {
@@ -72,7 +32,7 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
         }
     }
 
-    public OrtodoxCyrillicNumber(String strVal) {
+    public OrthodoxCyrillicNumberBI(String strVal) {
         char[] chars = strVal.toCharArray();
 
         int msd = chars.length - 1;
@@ -169,15 +129,15 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
 
     @Override public boolean equals(Object obj) {
         return obj != null
-            && obj.getClass() == OrtodoxCyrillicNumber.class
-            && Arrays.equals(digits, ((OrtodoxCyrillicNumber) obj).digits);
+            && obj.getClass() == OrthodoxCyrillicNumberBI.class
+            && Arrays.equals(digits, ((OrthodoxCyrillicNumberBI) obj).digits);
     }
 
-    @Override public int compareTo(OrtodoxCyrillicNumber o) {
+    @Override public int compareTo(OrthodoxCyrillicNumberBI o) {
         return truncateCompareTo(o, 0);
     }
 
-    @Override public int truncateCompareTo(OrtodoxCyrillicNumber o, final int lowerDigitsToSkip) {
+    @Override public int truncateCompareTo(OrthodoxCyrillicNumberBI o, final int lowerDigitsToSkip) {
         if (o == null)
             return -1;
 
@@ -194,7 +154,7 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
         return 0;
     }
 
-    public OrtodoxCyrillicNumber add(OrtodoxCyrillicNumber o) {
+    public OrthodoxCyrillicNumberBI add(OrthodoxCyrillicNumberBI o) {
         int[] a1;
         int[] a2;
 
@@ -250,16 +210,16 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
             sum = Arrays.copyOf(sum, a1sz);
         }
 
-        OrtodoxCyrillicNumber sumOcn = new OrtodoxCyrillicNumber(sum);
+        OrthodoxCyrillicNumberBI sumOcn = new OrthodoxCyrillicNumberBI(sum);
 
         assert sumOcn.toBigInteger().equals(this.toBigInteger().add(o.toBigInteger()))
                 : "Addition error: " + this + " + " + o + ": actual=" + sumOcn
-                + "; required=" + new OrtodoxCyrillicNumber(this.toBigInteger().add(o.toBigInteger()));
+                + "; required=" + new OrthodoxCyrillicNumberBI(this.toBigInteger().add(o.toBigInteger()));
 
         return sumOcn;
     }
 
-    public void addInplace(OrtodoxCyrillicNumber o) {
+    public void addInplace(OrthodoxCyrillicNumberBI o) {
         int[] a1;
         int[] a2;
 
@@ -309,9 +269,9 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
         digits = a1;
     }
 
-    public OrtodoxCyrillicNumber subtract(OrtodoxCyrillicNumber o) {
+    public OrthodoxCyrillicNumberBI subtract(OrthodoxCyrillicNumberBI o) {
         if (this == o)
-            return new OrtodoxCyrillicNumber();
+            return new OrthodoxCyrillicNumberBI();
 
         int[] othDigits = o.digits;
         int[] thisDigits = this.digits;
@@ -352,12 +312,13 @@ public class OrtodoxCyrillicNumber extends Number implements Comparable<OrtodoxC
 
         assert borrow == 0;
 
-        OrtodoxCyrillicNumber sumOcn = new OrtodoxCyrillicNumber(sum);
+        OrthodoxCyrillicNumberBI sumOcn = new OrthodoxCyrillicNumberBI(sum);
 
         assert sumOcn.toBigInteger().equals(this.toBigInteger().subtract(o.toBigInteger()))
                 : "Subtraction error: actual=" + sumOcn
-                + "; required=" + new OrtodoxCyrillicNumber(this.toBigInteger().subtract(o.toBigInteger()));
+                + "; required=" + new OrthodoxCyrillicNumberBI(this.toBigInteger().subtract(o.toBigInteger()));
 
         return sumOcn;
     }
+    */
 }
